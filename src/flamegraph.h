@@ -37,6 +37,7 @@ class QGraphicsScene;
 class QGraphicsView;
 class QComboBox;
 class QLabel;
+class QLineEdit;
 
 class FrameGraphicsItem;
 
@@ -44,11 +45,11 @@ class FlameGraph : public QWidget
 {
     Q_OBJECT
 public:
-    FlameGraph(QWidget* parent = nullptr, Qt::WindowFlags flags = 0);
+    explicit FlameGraph(QWidget* parent = nullptr, Qt::WindowFlags flags = 0);
     ~FlameGraph();
 
-    void setTopDownData(const Data::TopDown& topDownData);
-    void setBottomUpData(const Data::BottomUp& bottomUpData);
+    void setTopDownData(const Data::TopDownResults& topDownData);
+    void setBottomUpData(const Data::BottomUpResults& bottomUpData);
 
 protected:
     bool eventFilter(QObject* object, QEvent* event) override;
@@ -56,6 +57,8 @@ protected:
 private slots:
     void setData(FrameGraphicsItem* rootItem);
     void setSearchValue(const QString& value);
+    void navigateBack();
+    void navigateForward();
 
 signals:
     void jumpToCallerCallee(const Data::Symbol& symbol);
@@ -63,19 +66,23 @@ signals:
 private:
     void setTooltipItem(const FrameGraphicsItem* item);
     void updateTooltip();
-    void navigateBack();
-    void navigateForward();
     void showData();
+    void selectItem(int item);
     void selectItem(FrameGraphicsItem* item);
+    void updateNavigationActions();
 
-    Data::TopDown m_topDownData;
-    Data::BottomUp m_bottomUpData;
+    Data::TopDownResults m_topDownData;
+    Data::BottomUpResults m_bottomUpData;
 
     QComboBox* m_costSource;
     QGraphicsScene* m_scene;
     QGraphicsView* m_view;
     QLabel* m_displayLabel;
     QLabel* m_searchResultsLabel;
+    QLineEdit* m_searchInput = nullptr;
+    QAction* m_forwardAction = nullptr;
+    QAction* m_backAction = nullptr;
+    QAction* m_resetAction = nullptr;
     const FrameGraphicsItem* m_tooltipItem = nullptr;
     FrameGraphicsItem* m_rootItem = nullptr;
     QVector<FrameGraphicsItem*> m_selectionHistory;
@@ -83,6 +90,7 @@ private:
     int m_minRootWidth = 0;
     bool m_showBottomUpData = false;
     bool m_collapseRecursion = false;
+    bool m_buildingScene = false;
     // cost threshold in percent, items below that value will not be shown
     double m_costThreshold = 0.1;
 };

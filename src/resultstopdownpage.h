@@ -1,5 +1,5 @@
 /*
-  summarydata.h
+  resultstopdownpage.h
 
   This file is part of Hotspot, the Qt GUI for performance analysis.
 
@@ -27,41 +27,34 @@
 
 #pragma once
 
-#include <QTypeInfo>
-#include <QVector>
-#include <QStringList>
+#include <QWidget>
 
-struct SummaryData
+namespace Ui {
+class ResultsTopDownPage;
+}
+
+namespace Data {
+struct Symbol;
+}
+
+class QTreeView;
+
+class PerfParser;
+
+class ResultsTopDownPage : public QWidget
 {
-    quint64 applicationRunningTime = 0;
-    quint32 threadCount = 0;
-    quint32 processCount = 0;
-    QString command;
-    quint64 lostChunks = 0;
-    QString hostName;
-    QString linuxKernelVersion;
-    QString perfVersion;
-    QString cpuDescription;
-    QString cpuId;
-    QString cpuArchitecture;
-    quint32 cpusOnline = 0;
-    quint32 cpusAvailable = 0;
-    QString cpuSiblingCores;
-    QString cpuSiblingThreads;
-    quint64 totalMemoryInKiB = 0;
+    Q_OBJECT
+public:
+    explicit ResultsTopDownPage(PerfParser *parser, QWidget *parent = nullptr);
+    ~ResultsTopDownPage();
 
-    // total number of samples
-    quint64 sampleCount = 0;
-    struct CostSummary
-    {
-        QString label;
-        quint64 sampleCount = 0;
-    };
-    QVector<CostSummary> costs;
+private slots:
+    void customContextMenu(const QPoint &point, QTreeView* view, int symbolRole);
+    void onContextMenu(const QPoint &pos);
 
-    QStringList errors;
+signals:
+    void jumpToCallerCallee(const Data::Symbol& symbol);
+
+private:
+    QScopedPointer<Ui::ResultsTopDownPage> ui;
 };
-
-Q_DECLARE_METATYPE(SummaryData)
-Q_DECLARE_TYPEINFO(SummaryData, Q_MOVABLE_TYPE);
-Q_DECLARE_TYPEINFO(SummaryData::CostSummary, Q_MOVABLE_TYPE);

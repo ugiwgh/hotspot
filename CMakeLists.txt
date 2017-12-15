@@ -1,16 +1,22 @@
 cmake_minimum_required(VERSION 3.1.0)
-project(hotspot CXX C)
+project(hotspot VERSION 1.1.0 LANGUAGES CXX C)
 
 if (POLICY CMP0063)
     cmake_policy (SET CMP0063 NEW)
 endif (POLICY CMP0063)
 
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/perfparser/.git" )
-    message( FATAL_ERROR
-        "The perfparser git submodule is not initialized.\n"
-        "Please run the following commands in the source directory (${PROJECT_SOURCE_DIR}):\n"
-        "    git submodule update --init --recursive\n"
-    )
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/perfparser/app/main.cpp" )
+    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+        message( FATAL_ERROR
+            "The perfparser git submodule is not initialized.\n"
+            "Please run the following commands in the source directory (${PROJECT_SOURCE_DIR}):\n"
+            "    git submodule update --init --recursive\n"
+        )
+    else()
+        message( FATAL_ERROR
+            "The perfparser submodule is missing - please report a broken source package.\n"
+        )
+    endif()
 endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ ${CMAKE_MODULE_PATH})
@@ -26,27 +32,21 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
 endif()
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 11)
 
 # Enable the test harness
 enable_testing()
 
 # Version setup
-set(HOTSPOT_VERSION_MAJOR "0")
-set(HOTSPOT_VERSION_MINOR "0")
-set(HOTSPOT_VERSION_PATCH "80")
-set(HOTSPOT_VERSION "${HOTSPOT_VERSION_MAJOR}.${HOTSPOT_VERSION_MINOR}.${HOTSPOT_VERSION_PATCH}")
-set(HOTSPOT_VERSION_STRING "${HOTSPOT_VERSION}")
-set(HOTSPOT_SOVERSION "1.0.0")
-set(HOTSPOT_PLUGIN_VERSION "1.0")
-set(PROJECT_VERSION_STRING "${HOTSPOT_VERSION_STRING}")
+set(HOTSPOT_VERSION_STRING "${hotspot_VERSION}")
 
 include(FeatureSummary)
 
-find_package(Qt5 COMPONENTS Core Widgets Network Test REQUIRED)
+find_package(Qt5 5.6 COMPONENTS Core Widgets Network Test REQUIRED)
 find_package(LibElf REQUIRED)
 find_package(Elfutils REQUIRED) # TODO: make optional, use internal copy
 find_package(ECM 1.0.0 NO_MODULE REQUIRED)
+find_package(Threads REQUIRED)
 
 if(Qt5_FOUND AND ECM_FOUND)
     set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${ECM_MODULE_PATH} ${ECM_KDE_MODULE_DIR})
@@ -57,6 +57,8 @@ if(Qt5_FOUND AND ECM_FOUND)
         CoreAddons
         ItemViews
         ItemModels
+        KIO
+        Solid
         REQUIRED
     )
 endif()

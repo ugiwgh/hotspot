@@ -28,8 +28,17 @@
 #pragma once
 
 #include <QtGlobal>
+#include <QHashFunctions>
+#include <valarray>
 
 class QString;
+
+namespace Data {
+struct Symbol;
+struct LocationCost;
+class Costs;
+using ItemCost = std::valarray<qint64>;
+}
 
 namespace Util {
 
@@ -48,7 +57,17 @@ struct HashCombine {
 };
 
 QString formatString(const QString& input);
-QString formatCost(quint32 cost);
-QString formatCostRelative(quint32 selfCost, quint64 totalCost);
-
+QString formatCost(quint64 cost);
+QString formatCostRelative(quint64 selfCost, quint64 totalCost, bool addPercentSign = false);
+QString formatTimeString(quint64 nanoseconds);
+QString formatFrequency(quint64 occurrences, quint64 nanoseconds);
+QString formatTooltip(int id, const Data::Symbol& symbol,
+                      const Data::Costs& costs);
+QString formatTooltip(int id, const Data::Symbol& symbol,
+                      const Data::Costs& selfCosts, const Data::Costs& inclusiveCosts);
+QString formatTooltip(const Data::Symbol& symbol, const Data::ItemCost& itemCost,
+                      const Data::Costs& totalCosts);
+QString formatTooltip(const QString& location,
+                      const Data::LocationCost& cost,
+                      const Data::Costs& totalCosts);
 }

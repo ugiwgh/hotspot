@@ -1,2 +1,7 @@
 add_subdirectory(cpp-inlining)
 add_subdirectory(cpp-recursion)
+add_subdirectory(cpp-locking)
+add_subdirectory(cpp-minimal-static)
+add_subdirectory(cpp-stdin)
+add_subdirectory(c-syscalls)
+add_subdirectory(cpp-sleep)

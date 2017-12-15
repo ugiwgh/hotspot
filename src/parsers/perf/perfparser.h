@@ -29,17 +29,16 @@
 
 #include <QObject>
 #include <memory>
+#include <atomic>
 
 #include <models/data.h>
-
-struct SummaryData;
 
 // TODO: create a parser interface
 class PerfParser : public QObject
 {
     Q_OBJECT
 public:
-    PerfParser(QObject* parent = nullptr);
+    explicit PerfParser(QObject* parent = nullptr);
     ~PerfParser();
 
     void startParseFile(const QString& path, const QString& sysroot,
@@ -47,13 +46,28 @@ public:
                         const QString& extraLibPaths, const QString& appPath,
                         const QString& arch);
 
+    void filterResults(quint64 start, quint64 end,
+                       qint32 processId, qint32 threadId,
+                       const QVector<qint32>& excludeProcessIds,
+                       const QVector<qint32>& excludeThreadIds);
+
+    void stop();
+
 signals:
-    // TODO: progress bar
-    void summaryDataAvailable(const SummaryData& data);
-    void bottomUpDataAvailable(const Data::BottomUp& data);
-    void topDownDataAvailable(const Data::TopDown& data);
-    void callerCalleeDataAvailable(const Data::CallerCalleeEntryMap& data);
+    void parsingStarted();
+    void summaryDataAvailable(const Data::Summary& data);
+    void bottomUpDataAvailable(const Data::BottomUpResults& data);
+    void topDownDataAvailable(const Data::TopDownResults& data);
+    void callerCalleeDataAvailable(const Data::CallerCalleeResults& data);
+    void eventsAvailable(const Data::EventResults& events);
     void parsingFinished();
     void parsingFailed(const QString& errorMessage);
     void progress(float progress);
+
+private:
+    // only set once after the initial startParseFile finished
+    Data::BottomUpResults m_bottomUpResults;
+    Data::EventResults m_events;
+    std::atomic<bool> m_isParsing;
+    std::atomic<bool> m_stopRequested;
 };

@@ -37,9 +37,9 @@
 
 #include <ThreadWeaver/ThreadWeaver>
 
-#include <models/summarydata.h>
-
 #include <util.h>
+
+#include <functional>
 
 Q_LOGGING_CATEGORY(LOG_PERFPARSER, "hotspot.perfparser", QtWarningMsg)
 
@@ -91,6 +91,8 @@ struct AttributesDefinition
     quint32 type = 0;
     quint64 config = 0;
     StringId name;
+    bool usesFrequency = false;
+    quint64 frequencyOrPeriod = 0;
 };
 
 QDataStream& operator>>(QDataStream& stream, AttributesDefinition& attributesDefinition)
@@ -98,7 +100,9 @@ QDataStream& operator>>(QDataStream& stream, AttributesDefinition& attributesDef
     return stream >> attributesDefinition.id
                   >> attributesDefinition.type
                   >> attributesDefinition.config
-                  >> attributesDefinition.name;
+                  >> attributesDefinition.name
+                  >> attributesDefinition.usesFrequency
+                  >> attributesDefinition.frequencyOrPeriod;
 }
 
 QDebug operator<<(QDebug stream, const AttributesDefinition& attributesDefinition)
@@ -107,7 +111,9 @@ QDebug operator<<(QDebug stream, const AttributesDefinition& attributesDefinitio
         << "id=" << attributesDefinition.id << ", "
         << "type=" << attributesDefinition.type << ", "
         << "config=" << attributesDefinition.config << ", "
-        << "name=" << attributesDefinition.name
+        << "name=" << attributesDefinition.name << ", "
+        << "usesFrequency=" << attributesDefinition.usesFrequency << ", "
+        << "frequencyOrPeriod=" << attributesDefinition.frequencyOrPeriod
         << "}";
     return stream;
 }
@@ -131,46 +137,36 @@ QDebug operator<<(QDebug stream, const Command& command)
     return stream;
 }
 
-struct ThreadStart
+struct ThreadStart : Record
 {
-    quint32 childPid = 0;
-    quint32 childTid = 0;
-    quint64 time = 0;
 };
 
 QDataStream& operator>>(QDataStream& stream, ThreadStart& threadStart)
 {
-    return stream >> threadStart.childPid >> threadStart.childTid >> threadStart.time;
+    return stream >> static_cast<Record&>(threadStart);
 }
 
 QDebug operator<<(QDebug stream, const ThreadStart& threadStart)
 {
     stream.noquote().nospace() << "ThreadStart{"
-        << "childPid=" << threadStart.childPid << ", "
-        << "childTid=" << threadStart.childTid << ", "
-        << "time=" << threadStart.time
+        << static_cast<const Record&>(threadStart)
         << "}";
     return stream;
 }
 
-struct ThreadEnd
+struct ThreadEnd : Record
 {
-    quint32 childPid = 0;
-    quint32 childTid = 0;
-    quint64 time = 0;
 };
 
 QDataStream& operator>>(QDataStream& stream, ThreadEnd& threadEnd)
 {
-    return stream >> threadEnd.childPid >> threadEnd.childTid >> threadEnd.time;
+    return stream >> static_cast<Record&>(threadEnd);
 }
 
 QDebug operator<<(QDebug stream, const ThreadEnd& threadEnd)
 {
     stream.noquote().nospace() << "ThreadEnd{"
-        << "childPid=" << threadEnd.childPid << ", "
-        << "childTid=" << threadEnd.childTid << ", "
-        << "time=" << threadEnd.time
+        << static_cast<const Record&>(threadEnd)
         << "}";
     return stream;
 }
@@ -267,20 +263,37 @@ QDebug operator<<(QDebug stream, const SymbolDefinition& symbolDefinition)
     return stream;
 }
 
+struct SampleCost
+{
+    qint32 attributeId = 0;
+    quint64 cost = 0;
+};
+
+QDataStream& operator>>(QDataStream& stream, SampleCost& sampleCost)
+{
+    return stream >> sampleCost.attributeId >> sampleCost.cost;
+}
+
+QDebug operator<<(QDebug stream, const SampleCost& sampleCost)
+{
+    stream.noquote().nospace() << "SampleCost{"
+        << "attributeId=" << sampleCost.attributeId << ", "
+        << "cost=" << sampleCost.cost
+        << "}";
+    return stream;
+}
+
 struct Sample : Record
 {
     QVector<qint32> frames;
     quint8 guessedFrames = 0;
-    qint32 attributeId = 0;
-    quint64 period = 0;
-    quint64 weight = 0;
+    QVector<SampleCost> costs;
 };
 
 QDataStream& operator>>(QDataStream& stream, Sample& sample)
 {
     return stream >> static_cast<Record&>(sample)
-        >> sample.frames >> sample.guessedFrames >> sample.attributeId
-        >> sample.period >> sample.weight;
+        >> sample.frames >> sample.guessedFrames >> sample.costs;
 }
 
 QDebug operator<<(QDebug stream, const Sample& sample)
@@ -289,11 +302,29 @@ QDebug operator<<(QDebug stream, const Sample& sample)
         << static_cast<const Record&>(sample) << ", "
         << "frames=" << sample.frames << ", "
         << "guessedFrames=" << sample.guessedFrames << ", "
-        << "attributeId=" << sample.attributeId << ", "
-        << "period=" << sample.period << ", "
-        << "weight=" << sample.weight
+        << "costs=" << sample.costs
         << "}";
     return stream;
+}
+
+struct ContextSwitchDefinition : Record
+{
+    bool switchOut = false;
+};
+
+QDataStream& operator>>(QDataStream& stream, ContextSwitchDefinition& contextSwitch)
+{
+    return stream >> static_cast<Record&>(contextSwitch)
+        >> contextSwitch.switchOut;
+}
+
+QDebug operator<<(QDebug stream, const ContextSwitchDefinition& contextSwitch)
+{
+    stream.noquote().nospace() << "ContextSwitchDefinition{"
+        << static_cast<const Record&>(contextSwitch) << ", "
+        << "switchOut=" << contextSwitch.switchOut
+        << "}";
+    return stream.space();
 }
 
 struct StringDefinition
@@ -514,25 +545,32 @@ QDebug operator<<(QDebug stream, const Error& error)
     return stream;
 }
 
-struct LocationData
+void addCallerCalleeEvent(const Data::Symbol& symbol, const Data::Location& location,
+                          int type, quint64 cost, QSet<Data::Symbol>* recursionGuard,
+                          Data::CallerCalleeResults* callerCalleeResult, int numCosts)
 {
-    LocationData(qint32 parentLocationId = -1, const Data::Location& location = {})
-        : parentLocationId(parentLocationId)
-        , location(location)
-    { }
-
-    qint32 parentLocationId = -1;
-    Data::Location location;
-};
+    auto recursionIt = recursionGuard->find(symbol);
+    if (recursionIt == recursionGuard->end()) {
+        auto& entry = callerCalleeResult->entry(symbol);
+        auto& locationCost = entry.source(location.location, numCosts);
+        locationCost.inclusiveCost[type] += cost;
+        if (recursionGuard->isEmpty()) {
+            // increment self cost for leaf
+            locationCost.selfCost[type] += cost;
+        }
+        recursionGuard->insert(symbol);
+    }
+}
 }
 
 Q_DECLARE_TYPEINFO(AttributesDefinition, Q_MOVABLE_TYPE);
-Q_DECLARE_TYPEINFO(LocationData, Q_MOVABLE_TYPE);
+Q_DECLARE_TYPEINFO(SampleCost, Q_MOVABLE_TYPE);
 
 struct PerfParserPrivate
 {
-    PerfParserPrivate(std::function<void(float)> progressHandler)
+    PerfParserPrivate(std::atomic<bool>& stopRequested, std::function<void(float)> progressHandler)
         : progressHandler(progressHandler)
+        , stopRequested(stopRequested)
     {
         buffer.buffer().reserve(1024);
         buffer.open(QIODevice::ReadOnly);
@@ -546,6 +584,10 @@ struct PerfParserPrivate
 
     bool tryParse()
     {
+        if (stopRequested) {
+            process.kill();
+            return false;
+        }
         const auto bytesAvailable = process.bytesAvailable();
         switch (state) {
             case HEADER: {
@@ -627,25 +669,42 @@ struct PerfParserPrivate
 
         switch (static_cast<EventType>(eventType)) {
             case EventType::Sample43: // fall-through
+            case EventType::Sample45:
+                qCWarning(LOG_PERFPARSER) << "unexpected legacy type encountered" << eventType;
+                break;
             case EventType::Sample: {
                 Sample sample;
                 stream >> sample;
                 qCDebug(LOG_PERFPARSER) << "parsed:" << sample;
+                for (auto& sampleCost : sample.costs) {
+                    if (!sampleCost.cost) {
+                        const auto& attribute = attributes.value(sampleCost.attributeId);
+                        if (!attribute.usesFrequency) {
+                            sampleCost.cost = attribute.frequencyOrPeriod;
+                        }
+                    }
+                }
                 addSample(sample);
                 break;
             }
+            // WARNING: this event is not time-sorted
             case EventType::ThreadStart: {
                 ThreadStart threadStart;
                 stream >> threadStart;
                 qCDebug(LOG_PERFPARSER) << "parsed:" << threadStart;
+                // override start time explicitly
+                addThread(threadStart)->timeStart = threadStart.time;
                 break;
             }
+            // WARNING: this event is not time-sorted
             case EventType::ThreadEnd: {
                 ThreadEnd threadEnd;
                 stream >> threadEnd;
                 qCDebug(LOG_PERFPARSER) << "parsed:" << threadEnd;
+                addThreadEnd(threadEnd);
                 break;
             }
+            // WARNING: this event is not time-sorted
             case EventType::Command: {
                 Command command;
                 stream >> command;
@@ -681,6 +740,7 @@ struct PerfParserPrivate
                 addString(stringDefinition);
                 break;
             }
+            // WARNING: this event is not time-sorted
             case EventType::LostDefinition: {
                 LostDefinition lostDefinition;
                 stream >> lostDefinition;
@@ -700,6 +760,13 @@ struct PerfParserPrivate
                 stream >> error;
                 qCDebug(LOG_PERFPARSER) << "parsed:" << error;
                 addError(error);
+                break;
+            }
+            case EventType::ContextSwitchDefinition: {
+                ContextSwitchDefinition contextSwitch;
+                stream >> contextSwitch;
+                qCDebug(LOG_PERFPARSER) << "parsed:" << contextSwitch;
+                addContextSwitch(contextSwitch);
                 break;
             }
             case EventType::Progress: {
@@ -724,31 +791,102 @@ struct PerfParserPrivate
 
     void finalize()
     {
-        Data::BottomUp::initializeParents(&bottomUpResult);
+        Data::BottomUp::initializeParents(&bottomUpResult.root);
 
-        calculateSummary();
+        summaryResult.applicationRunningTime = applicationEndTime - applicationStartTime;
+        summaryResult.threadCount = uniqueThreads.size();
+        summaryResult.processCount = uniqueProcess.size();
 
         buildTopDownResult();
         buildCallerCalleeResult();
+
+        auto emptyThreadIt = std::remove_if(eventResult.threads.begin(),
+                                            eventResult.threads.end(),
+                                            [](const Data::ThreadEvents& thread) {
+                                                return thread.events.isEmpty();
+                                            });
+        eventResult.threads.erase(emptyThreadIt, eventResult.threads.end());
+
+        for (auto& thread : eventResult.threads) {
+            thread.timeStart = std::max(thread.timeStart, applicationStartTime);
+            thread.timeEnd = std::min(thread.timeEnd, applicationEndTime);
+            if (thread.name.isEmpty()) {
+                thread.name = PerfParser::tr("#%1").arg(thread.tid);
+            }
+
+            // we may have been switched out before detaching perf, so increment
+            // the off-CPU time in this case
+            if (thread.state == Data::ThreadEvents::OffCpu) {
+                thread.offCpuTime += thread.timeEnd - thread.lastSwitchTime;
+            }
+
+            const auto runTime = thread.timeEnd - thread.timeStart;
+            summaryResult.offCpuTime += thread.offCpuTime;
+            summaryResult.onCpuTime += runTime - thread.offCpuTime;
+        }
+
+        eventResult.totalCosts = summaryResult.costs;
     }
 
     void addAttributes(const AttributesDefinition& attributesDefinition)
     {
-        const auto label = strings.value(attributesDefinition.name.id);
-        summaryResult.costs.push_back({label, 0});
+        qint32 costId = attributeNameToCostIds.value(attributesDefinition.name.id, -1);
+
+        if (costId == -1) {
+            costId = attributeNameToCostIds.size();
+            attributeNameToCostIds.insert(attributesDefinition.name.id, costId);
+
+            const auto label = strings.value(attributesDefinition.name.id);
+            Q_ASSERT(summaryResult.costs.size() == costId);
+            summaryResult.costs.push_back({label, 0, 0});
+            Q_ASSERT(bottomUpResult.costs.numTypes() == costId);
+            bottomUpResult.costs.addType(costId, label);
+        }
+
+        attributeIdsToCostIds[attributesDefinition.id] = costId;
+        Q_ASSERT(attributes.size() == attributesDefinition.id);
         attributes.push_back(attributesDefinition);
+    }
+
+    Data::ThreadEvents* addThread(const Record& record)
+    {
+        Data::ThreadEvents thread;
+        thread.pid = record.pid;
+        thread.tid = record.tid;
+        // when we encounter a thread the first time it was probably alive when
+        // we started the application, otherwise we override the start time when
+        // we encounter a ThreadStart event
+        thread.timeStart = applicationStartTime;
+        thread.name = commands.value(thread.pid)
+                              .value(thread.tid);
+        eventResult.threads.push_back(thread);
+        return &eventResult.threads.last();
+    }
+
+    void addThreadEnd(const ThreadEnd& threadEnd)
+    {
+        auto* thread = eventResult.findThread(threadEnd.pid, threadEnd.tid);
+        if (thread) {
+            thread->timeEnd = threadEnd.time;
+        }
     }
 
     void addCommand(const Command& command)
     {
-        // TODO: keep track of list of commands for filtering later on
-        commands[command.pid] = strings.value(command.comm.id);
+        const auto& comm = strings.value(command.comm.id);
+        // check if this changes the name of a current thread
+        auto* thread = eventResult.findThread(command.pid, command.tid);
+        if (thread) {
+            thread->name = comm;
+        }
+        // and remember the command, maybe a future ThreadStart event references it
+        commands[command.pid][command.tid] = comm;
     }
 
     void addLocation(const LocationDefinition& location)
     {
-        Q_ASSERT(locations.size() == location.id);
-        Q_ASSERT(symbols.size() == location.id);
+        Q_ASSERT(bottomUpResult.locations.size() == location.id);
+        Q_ASSERT(bottomUpResult.symbols.size() == location.id);
         QString locationString;
         if (location.location.file.id != -1) {
             locationString = strings.value(location.location.file.id);
@@ -756,68 +894,56 @@ struct PerfParserPrivate
                 locationString += QLatin1Char(':') + QString::number(location.location.line);
             }
         }
-        locations.push_back({
+        bottomUpResult.locations.push_back({
             location.location.parentLocationId,
             {location.location.address, locationString}
         });
-        symbols.push_back({});
+        bottomUpResult.symbols.push_back({});
     }
 
     void addSymbol(const SymbolDefinition& symbol)
     {
-        // TODO: do we need to handle pid/tid here?
-        // TODO: store binary, isKernel information
-        Q_ASSERT(symbols.size() > symbol.id);
-        symbols[symbol.id] = {
-            strings.value(symbol.symbol.name.id),
-            strings.value(symbol.symbol.binary.id)
-        };
+        // empty symbol was added in addLocation already
+        Q_ASSERT(bottomUpResult.symbols.size() > symbol.id);
+        // TODO: isKernel information
+        const auto symbolString = strings.value(symbol.symbol.name.id);
+        const auto binaryString = strings.value(symbol.symbol.binary.id);
+        bottomUpResult.symbols[symbol.id] = {symbolString, binaryString};
+        if (symbolString.isEmpty() && !binaryString.isEmpty()
+            && !reportedMissingDebugInfoModules.contains(symbol.symbol.binary.id))
+        {
+            reportedMissingDebugInfoModules.insert(symbol.symbol.binary.id);
+            summaryResult.errors << PerfParser::tr("Module \"%1\" is missing (some) debug symbols.").arg(binaryString);
+        }
     }
 
-    Data::BottomUp* addFrame(Data::BottomUp* parent, qint32 id, QSet<Data::Symbol>* recursionGuard)
+    qint32 internStack(const QVector<qint32>& frames)
     {
-        bool skipNextFrame = false;
-        while (id != -1) {
-            const auto& location = locations.value(id);
-            if (skipNextFrame) {
-                id = location.parentLocationId;
-                skipNextFrame = false;
-                continue;
-            }
-
-            auto symbol = symbols.value(id);
-            if (!symbol.isValid()) {
-                // we get function entry points from the perfparser but
-                // those are imo not interesting - skip them
-                symbol = symbols.value(location.parentLocationId);
-                skipNextFrame = true;
-            }
-
-            auto ret = parent->entryForSymbol(symbol);
-            ++ret->cost;
-
-            if (perfScriptOutput) {
-                *perfScriptOutput << '\t' << hex << qSetFieldWidth(16) << location.location.address
-                                  << qSetFieldWidth(0) << dec << ' '
-                                  << (symbol.symbol.isEmpty() ? QStringLiteral("[unknown]") : symbol.symbol)
-                                  << " (" << symbol.binary << ")\n";
-            }
-
-            auto recursionIt = recursionGuard->find(symbol);
-            if (recursionIt == recursionGuard->end()) {
-                ++callerCalleeResult[symbol].sourceMap[location.location.location];
-                recursionGuard->insert(symbol);
-            }
-
-            parent = ret;
-            id = location.parentLocationId;
+        auto& id = stacks[frames];
+        if (!id) {
+            Q_ASSERT(stacks.size() == eventResult.stacks.size() + 1);
+            id = stacks.size();
+            eventResult.stacks.push_back(frames);
         }
-
-        return parent;
+        return id - 1;
     }
 
     void addSample(const Sample& sample)
     {
+        auto* thread = eventResult.findThread(sample.pid, sample.tid);
+        if (!thread) {
+            thread = addThread(sample);
+        }
+
+        for (const auto& sampleCost : sample.costs) {
+            Data::Event event;
+            event.time = sample.time;
+            event.cost = sampleCost.cost;
+            event.type = attributeIdsToCostIds.value(sampleCost.attributeId, -1);
+            event.stackId = internStack(sample.frames);
+            thread->events.push_back(event);
+        }
+
         addSampleToBottomUp(sample);
         addSampleToSummary(sample);
     }
@@ -830,33 +956,51 @@ struct PerfParserPrivate
 
     void addSampleToBottomUp(const Sample& sample)
     {
-        if (sample.attributeId != 0) {
-            // TODO: show costs from multiple event sources
-            return;
+        // TODO: optimize for groups, don't repeat the same lookup multiple times
+        for (const auto& sampleCost : sample.costs) {
+            addSampleToBottomUp(sample, sampleCost);
         }
+    }
 
+    void addSampleToBottomUp(const Sample& sample, const SampleCost& sampleCost)
+    {
         if (perfScriptOutput) {
-            *perfScriptOutput << commands.value(sample.pid) << '\t' << sample.pid << '\t'
-                              << qSetRealNumberPrecision(12)
-                              << static_cast<double>(sample.time) * 1.0E-9
-                              << ":\t" << sample.period << '\n';
+            *perfScriptOutput << commands.value(sample.pid).value(sample.pid) << '\t' << sample.pid << '\t'
+                              << sample.time / 1000000000 << '.'
+                              << qSetFieldWidth(9) << qSetPadChar(QLatin1Char('0'))
+                              << sample.time % 1000000000
+                              << qSetFieldWidth(0)
+                              << ":\t" << sampleCost.cost << ' ' << strings.value(attributes.value(sampleCost.attributeId).name.id) << '\n';
         }
 
-        ++bottomUpResult.cost;
-        auto parent = &bottomUpResult;
         QSet<Data::Symbol> recursionGuard;
-        for (auto id : sample.frames) {
-            parent = addFrame(parent, id, &recursionGuard);
-        }
+        const auto type = attributeIdsToCostIds.value(sampleCost.attributeId, -1);
+        auto frameCallback = [this, &recursionGuard, &sampleCost, type] (const Data::Symbol& symbol, const Data::Location& location)
+        {
+            addCallerCalleeEvent(symbol, location, type, sampleCost.cost,
+                                 &recursionGuard, &callerCalleeResult,
+                                 bottomUpResult.costs.numTypes());
+
+            if (perfScriptOutput) {
+                    *perfScriptOutput << '\t' << hex << qSetFieldWidth(16)
+                        << location.address
+                        << qSetFieldWidth(0) << dec << ' '
+                        << (symbol.symbol.isEmpty() ? QStringLiteral("[unknown]") : symbol.symbol)
+                        << " (" << symbol.binary << ")\n";
+            }
+        };
+
+        bottomUpResult.addEvent(type, sampleCost.cost, sample.frames, frameCallback);
 
         if (perfScriptOutput) {
             *perfScriptOutput << "\n";
         }
+
     }
 
     void buildTopDownResult()
     {
-        topDownResult = Data::TopDown::fromBottomUp(bottomUpResult);
+        topDownResult = Data::TopDownResults::fromBottomUp(bottomUpResult);
     }
 
     void buildCallerCalleeResult()
@@ -876,19 +1020,33 @@ struct PerfParserPrivate
         uniqueProcess.insert(sample.pid);
         ++summaryResult.sampleCount;
 
-        if (sample.attributeId < 0 || sample.attributeId >= summaryResult.costs.size()) {
-            qWarning() << "Unexpected attribute id:" << sample.attributeId
-                       << "Only know about" << summaryResult.costs.size() << "attributes so far";
-        } else {
-            ++summaryResult.costs[sample.attributeId].sampleCount;
+        for (const auto& sampleCost : sample.costs) {
+            const auto type = attributeIdsToCostIds.value(sampleCost.attributeId, -1);
+            if (type < 0) {
+                qWarning() << "Unexpected attribute id:" << sampleCost.attributeId
+                        << "Only know about" << attributeIdsToCostIds.size() << "attributes so far";
+            } else {
+                auto& costSummary = summaryResult.costs[type];
+                ++costSummary.sampleCount;
+                costSummary.totalPeriod += sampleCost.cost;
+            }
         }
     }
 
-    void calculateSummary()
+    void addContextSwitch(const ContextSwitchDefinition& contextSwitch)
     {
-        summaryResult.applicationRunningTime = applicationEndTime - applicationStartTime;
-        summaryResult.threadCount = uniqueThreads.size();
-        summaryResult.processCount = uniqueProcess.size();
+        auto* thread = eventResult.findThread(contextSwitch.pid, contextSwitch.tid);
+        if (!thread) {
+            return;
+        }
+
+        if (!contextSwitch.switchOut && thread->state == Data::ThreadEvents::OffCpu) {
+            thread->offCpuTime += contextSwitch.time - thread->lastSwitchTime;
+        }
+        thread->lastSwitchTime = contextSwitch.time;
+        thread->state = contextSwitch.switchOut
+                            ? Data::ThreadEvents::OffCpu
+                            : Data::ThreadEvents::OnCpu;
     }
 
     void addLost(const LostDefinition& /*lost*/)
@@ -921,7 +1079,10 @@ struct PerfParserPrivate
 
     void addError(const Error& error)
     {
-        summaryResult.errors << error.message;
+        if (!encounteredErrors.contains(error.message)) {
+            summaryResult.errors << error.message;
+            encounteredErrors.insert(error.message);
+        }
     }
 
     enum State {
@@ -944,8 +1105,10 @@ struct PerfParserPrivate
         LostDefinition,
         FeaturesDefinition,
         Error,
-        Sample,
+        Sample45, // backwards compatibility
         Progress,
+        ContextSwitchDefinition,
+        Sample,
         InvalidType
     };
 
@@ -954,26 +1117,58 @@ struct PerfParserPrivate
     QBuffer buffer;
     QDataStream stream;
     QVector<AttributesDefinition> attributes;
-    QVector<Data::Symbol> symbols;
-    QVector<LocationData> locations;
     QVector<QString> strings;
     QProcess process;
-    SummaryData summaryResult;
+    Data::Summary summaryResult;
     quint64 applicationStartTime = 0;
     quint64 applicationEndTime = 0;
     QSet<quint32> uniqueThreads;
     QSet<quint32> uniqueProcess;
-    Data::BottomUp bottomUpResult;
-    Data::TopDown topDownResult;
-    Data::CallerCalleeEntryMap callerCalleeResult;
-    QHash<quint32, QString> commands;
+    Data::BottomUpResults bottomUpResult;
+    Data::TopDownResults topDownResult;
+    Data::CallerCalleeResults callerCalleeResult;
+    Data::EventResults eventResult;
+    QHash<qint32, QHash<qint32, QString>> commands;
     QScopedPointer<QTextStream> perfScriptOutput;
     std::function<void(float)> progressHandler;
+    QSet<qint32> reportedMissingDebugInfoModules;
+    QSet<QString> encounteredErrors;
+    QHash<QVector<qint32>, qint32> stacks;
+    std::atomic<bool>& stopRequested;
+    QHash<qint32, qint32> attributeIdsToCostIds;
+    QHash<int, qint32> attributeNameToCostIds;
 };
 
 PerfParser::PerfParser(QObject* parent)
     : QObject(parent)
+    , m_isParsing(false)
+    , m_stopRequested(false)
 {
+    connect(this, &PerfParser::bottomUpDataAvailable,
+            this, [this](const Data::BottomUpResults& data) {
+                if (m_bottomUpResults.root.children.isEmpty()) {
+                    m_bottomUpResults = data;
+                }
+            });
+    connect(this, &PerfParser::eventsAvailable,
+            this, [this](const Data::EventResults& data) {
+                if (m_events.threads.isEmpty()) {
+                    m_events = data;
+                }
+            });
+    connect(this, &PerfParser::parsingStarted,
+            this, [this]() {
+                m_isParsing = true;
+                m_stopRequested = false;
+            });
+    connect(this, &PerfParser::parsingFailed,
+            this, [this]() {
+                m_isParsing = false;
+            });
+    connect(this, &PerfParser::parsingFinished,
+            this, [this]() {
+                m_isParsing = false;
+            });
 }
 
 PerfParser::~PerfParser() = default;
@@ -983,6 +1178,8 @@ void PerfParser::startParseFile(const QString& path, const QString& sysroot,
                                 const QString& extraLibPaths, const QString& appPath,
                                 const QString& arch)
 {
+    Q_ASSERT(!m_isParsing);
+
     QFileInfo info(path);
     if (!info.exists()) {
         emit parsingFailed(tr("File '%1' does not exist.").arg(path));
@@ -1029,37 +1226,76 @@ void PerfParser::startParseFile(const QString& path, const QString& sysroot,
         parserArgs += {QStringLiteral("--arch"), arch};
     }
 
+    emit parsingStarted();
     using namespace ThreadWeaver;
     stream() << make_job([parserBinary, parserArgs, this]() {
-        PerfParserPrivate d([this](float percent) {
+        PerfParserPrivate d(m_stopRequested, [this](float percent) {
             emit progress(percent);
         });
 
         connect(&d.process, &QProcess::readyRead,
-                [&d] {
+                &d.process, [&d] {
                     while (d.tryParse()) {
                         // just call tryParse until it fails
                     }
                 });
 
         connect(&d.process, static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
-                [&d, this] (int exitCode, QProcess::ExitStatus exitStatus) {
+                &d.process, [&d, this] (int exitCode, QProcess::ExitStatus exitStatus) {
+                    if (m_stopRequested) {
+                        emit parsingFailed(tr("Parsing stopped."));
+                        return;
+                    }
                     qCDebug(LOG_PERFPARSER) << exitCode << exitStatus;
 
-                    if (exitCode == EXIT_SUCCESS) {
-                        d.finalize();
-                        emit bottomUpDataAvailable(d.bottomUpResult);
-                        emit topDownDataAvailable(d.topDownResult);
-                        emit summaryDataAvailable(d.summaryResult);
-                        emit callerCalleeDataAvailable(d.callerCalleeResult);
-                        emit parsingFinished();
-                    } else {
-                        emit parsingFailed(tr("The hotspot-perfparser binary exited with code %1.").arg(exitCode));
+                    enum ErrorCodes {
+                        NoError,
+                        TcpSocketError,
+                        CannotOpen,
+                        BadMagic,
+                        HeaderError,
+                        DataError,
+                        MissingData,
+                        InvalidOption
+                    };
+                    switch (exitCode) {
+                        case NoError:
+                            d.finalize();
+                            emit bottomUpDataAvailable(d.bottomUpResult);
+                            emit topDownDataAvailable(d.topDownResult);
+                            emit summaryDataAvailable(d.summaryResult);
+                            emit callerCalleeDataAvailable(d.callerCalleeResult);
+                            emit eventsAvailable(d.eventResult);
+                            emit parsingFinished();
+                            break;
+                        case TcpSocketError:
+                            emit parsingFailed(tr("The hotspot-perfparser binary exited with code %1 (TCP socket error).").arg(exitCode));
+                            break;
+                        case CannotOpen:
+                            emit parsingFailed(tr("The hotspot-perfparser binary exited with code %1 (file could not be opened).").arg(exitCode));
+                            break;
+                        case BadMagic:
+                        case HeaderError:
+                        case DataError:
+                        case MissingData:
+                            emit parsingFailed(tr("The hotspot-perfparser binary exited with code %1 (invalid perf data file).").arg(exitCode));
+                            break;
+                        case InvalidOption:
+                            emit parsingFailed(tr("The hotspot-perfparser binary exited with code %1 (invalid option).").arg(exitCode));
+                            break;
+                        default:
+                            emit parsingFailed(tr("The hotspot-perfparser binary exited with code %1.").arg(exitCode));
+                            break;
                     }
                 });
 
         connect(&d.process, &QProcess::errorOccurred,
-                [&d, this] (QProcess::ProcessError error) {
+                &d.process, [&d, this] (QProcess::ProcessError error) {
+                    if (m_stopRequested) {
+                        emit parsingFailed(tr("Parsing stopped."));
+                        return;
+                    }
+
                     qCWarning(LOG_PERFPARSER) << error << d.process.errorString();
 
                     emit parsingFailed(d.process.errorString());
@@ -1072,4 +1308,122 @@ void PerfParser::startParseFile(const QString& path, const QString& sysroot,
         }
         d.process.waitForFinished(-1);
     });
+}
+
+void PerfParser::filterResults(quint64 start, quint64 end, qint32 processId, qint32 threadId,
+                               const QVector<qint32>& excludeProcessIds,
+                               const QVector<qint32>& excludeThreadIds)
+{
+    Q_ASSERT(!m_isParsing);
+
+    emit parsingStarted();
+    using namespace ThreadWeaver;
+    stream() << make_job([this, start, end, processId, threadId,
+                         excludeProcessIds, excludeThreadIds]()
+    {
+        Data::BottomUpResults bottomUp;
+        Data::EventResults events = m_events;
+        Data::CallerCalleeResults callerCallee;
+        const bool filterByTime = start != 0 && end != 0;
+        if (!filterByTime && processId == 0 && threadId == 0
+            && excludeProcessIds.isEmpty() && excludeThreadIds.isEmpty())
+        {
+            bottomUp = m_bottomUpResults;
+        } else {
+            bottomUp.symbols = m_bottomUpResults.symbols;
+            bottomUp.locations = m_bottomUpResults.locations;
+            bottomUp.costs.initializeCostsFrom(m_bottomUpResults.costs);
+            const int numCosts = m_bottomUpResults.costs.numTypes();
+
+            // remove events that lie outside the selected time span
+            // TODO: parallelize
+            for (auto& thread : events.threads) {
+                if (m_stopRequested) {
+                    emit parsingFailed(tr("Parsing stopped."));
+                    return;
+                }
+
+                if ((processId && thread.pid != processId) ||
+                    (threadId && thread.tid != threadId) ||
+                    (filterByTime && (thread.timeStart > end || thread.timeEnd < start)) ||
+                    excludeProcessIds.contains(thread.pid) ||
+                    excludeThreadIds.contains(thread.tid))
+                {
+                    thread.events.clear();
+                    continue;
+                }
+
+                if (filterByTime) {
+                    auto it = std::remove_if(thread.events.begin(),
+                                            thread.events.end(),
+                                            [start, end] (const Data::Event& event) {
+                                                return event.time < start || event.time >= end;
+                                            });
+                    thread.events.erase(it, thread.events.end());
+                }
+
+                if (m_stopRequested) {
+                    emit parsingFailed(tr("Parsing stopped."));
+                    return;
+                }
+
+                // add event data to bottom up and caller callee sets
+                for (const auto& event : thread.events) {
+                    QSet<Data::Symbol> recursionGuard;
+                    auto frameCallback = [&callerCallee, &recursionGuard, &event, numCosts]
+                        (const Data::Symbol& symbol, const Data::Location& location)
+                    {
+                        addCallerCalleeEvent(symbol, location,
+                                             event.type, event.cost,
+                                             &recursionGuard, &callerCallee,
+                                             numCosts);
+                    };
+
+                    bottomUp.addEvent(event.type, event.cost,
+                                      events.stacks.at(event.stackId),
+                                      frameCallback);
+                }
+            }
+
+            // remove threads that have no events within the selected time span
+            auto it = std::remove_if(events.threads.begin(), events.threads.end(),
+                                     [](const Data::ThreadEvents& thread) {
+                                        return thread.events.isEmpty();
+                                    });
+            events.threads.erase(it, events.threads.end());
+
+            Data::BottomUp::initializeParents(&bottomUp.root);
+        }
+
+        if (m_stopRequested) {
+            emit parsingFailed(tr("Parsing stopped."));
+            return;
+        }
+
+        // TODO: parallelize
+        Data::callerCalleesFromBottomUpData(bottomUp, &callerCallee);
+
+        if (m_stopRequested) {
+            emit parsingFailed(tr("Parsing stopped."));
+            return;
+        }
+
+        const auto topDown = Data::TopDownResults::fromBottomUp(bottomUp);
+
+        if (m_stopRequested) {
+            emit parsingFailed(tr("Parsing stopped."));
+            return;
+        }
+
+        emit bottomUpDataAvailable(bottomUp);
+        emit topDownDataAvailable(topDown);
+        emit callerCalleeDataAvailable(callerCallee);
+        emit eventsAvailable(events);
+        emit parsingFinished();
+    });
+}
+
+void PerfParser::stop()
+{
+    m_stopRequested = true;
 }

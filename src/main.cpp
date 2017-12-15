@@ -32,22 +32,27 @@
 #include "hotspot-config.h"
 #include "mainwindow.h"
 #include "models/data.h"
-#include "models/summarydata.h"
 
 int main(int argc, char** argv)
 {
+    QCoreApplication::setOrganizationName(QStringLiteral("KDAB"));
+    QCoreApplication::setOrganizationDomain(QStringLiteral("kdab.com"));
+    QCoreApplication::setApplicationName(QStringLiteral("hotspot"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(HOTSPOT_VERSION_STRING));
+
     QApplication app(argc, argv);
-    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("hotspot"), app.windowIcon()));
-    qRegisterMetaType<SummaryData>();
+    app.setWindowIcon(QIcon(QStringLiteral(":/images/icons/512-hotspot_app_icon.png")));
+    qRegisterMetaType<Data::Summary>();
     qRegisterMetaType<Data::BottomUp>();
     qRegisterMetaType<Data::TopDown>();
     qRegisterMetaType<Data::CallerCalleeEntryMap>("Data::CallerCalleeEntryMap");
-
-    app.setApplicationName(QStringLiteral("hotspot"));
-    app.setApplicationVersion(QStringLiteral(HOTSPOT_VERSION_STRING));
+    qRegisterMetaType<Data::BottomUpResults>();
+    qRegisterMetaType<Data::TopDownResults>();
+    qRegisterMetaType<Data::CallerCalleeResults>();
+    qRegisterMetaType<Data::EventResults>();
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Qt GUI for performance analysis."));
+    parser.setApplicationDescription(QStringLiteral("Linux perf GUI for performance analysis."));
     parser.addHelpOption();
     parser.addVersionOption();
 
